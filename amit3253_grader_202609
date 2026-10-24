@@ -1,0 +1,658 @@
+#!/usr/bin/env python3
+"""
+AMIT3253 Cloud Computing for Business - Automated Grading Script
+Final Assessment (December, Week 6) - AWS Academy Learner Lab
+ 
+Grades a student's deployed AWS resources against the four exam questions:
+  Question 1 - VPC and Networking        (25 marks)
+  Question 2 - EC2 Instance               (25 marks)
+  Question 3 - Application Load Balancer  (25 marks)
+  Question 4 - Auto Scaling Group         (25 marks)
+  TOTAL                                   (100 marks)
+ 
+This script is a first-pass grader only. Per the marking rubric
+(AMIT3253_Marking_Rubric.md), if the auto-grader's output disagrees with the
+student's submitted screenshot evidence, the rubric is the reference for
+manual adjustment - run this script first, then reconcile any discrepancy
+by hand using the rubric.
+ 
+Run inside the student's AWS Academy Learner Lab session (same region the
+resources were created in), with boto3 credentials already configured
+(the Learner Lab's exported AWS CLI credentials are sufficient).
+"""
+ 
+import base64
+import re
+import ssl
+import urllib.error
+import urllib.request
+ 
+import boto3
+ 
+TOTAL_MARKS = 0
+SCORED_MARKS = 0
+ 
+ 
+def print_header(text):
+    print("\n" + "=" * 70)
+    print(text)
+    print("=" * 70)
+ 
+ 
+def normalize_name(s):
+    """Lowercase and strip everything except letters/digits, so spacing,
+    hyphens, underscores and case differences never block a match."""
+    if not s:
+        return ""
+    return re.sub(r'[^a-z0-9]', '', s.lower())
+ 
+ 
+def has_token(name, token):
+    """True if the normalized token appears inside the normalized name."""
+    if not name or not token:
+        return False
+    return normalize_name(token) in normalize_name(name)
+ 
+ 
+def get_name_tag(tags):
+    """Pull the 'Name' tag value out of a boto3 Tags list."""
+    if not tags:
+        return ""
+    for tag in tags:
+        if tag.get('Key') == 'Name':
+            return tag.get('Value', "")
+    return ""
+ 
+ 
+def award_points(description, max_points, points_earned, details=""):
+    """Record a scored criterion. points_earned is clamped to [0, max_points]."""
+    global TOTAL_MARKS, SCORED_MARKS
+    TOTAL_MARKS += max_points
+    points_earned = max(0, min(points_earned, max_points))
+    SCORED_MARKS += points_earned
+    if points_earned == max_points:
+        mark = "[OK]"
+    elif points_earned > 0:
+        mark = "[~]"
+    else:
+        mark = "[X]"
+    suffix = f"  ({details})" if details else ""
+    print(f"{mark} {description}: {points_earned}/{max_points}{suffix}")
+    return points_earned
+ 
+ 
+def check_website_detailed(url, keyword):
+    """Returns (status_ok, keyword_found) for a given URL. Never raises."""
+    try:
+        ctx = ssl._create_unverified_context()
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+        status_ok = resp.status == 200
+        body = resp.read().decode('utf-8', errors='ignore')
+        keyword_found = normalize_name(keyword) in normalize_name(body)
+        return status_ok, keyword_found
+    except Exception:
+        return False, False
+ 
+ 
+def main():
+    global TOTAL_MARKS, SCORED_MARKS
+ 
+    student_name = input("Enter Student Full Name: ").strip()
+    name_token = student_name  # has_token()/normalize_name() absorb spacing/case/hyphen differences
+ 
+    ec2 = boto3.client('ec2')
+    asg_client = boto3.client('autoscaling')
+    elbv2 = boto3.client('elbv2')
+ 
+    # Values captured in Question 1/2/3 and reused by later questions.
+    target_vpc = None
+    public_subnets = []
+    q2_ami_id = None
+    q2_instance_type = None
+    q2_userdata = ""
+    target_tg = None
+    target_alb = None
+    alb_sg = None
+ 
+    # ================================================================
+    # QUESTION 1: VPC AND NETWORKING (25 marks)
+    # ================================================================
+    print_header("QUESTION 1: VPC AND NETWORKING (25 marks)")
+ 
+    igw = None
+ 
+    try:
+        vpcs = ec2.describe_vpcs()['Vpcs']
+        candidates = [v for v in vpcs if has_token(get_name_tag(v.get('Tags')), name_token)
+                      or has_token(get_name_tag(v.get('Tags')), 'vpc')]
+        for v in candidates:
+            if has_token(get_name_tag(v.get('Tags')), name_token):
+                target_vpc = v
+                break
+        if not target_vpc and candidates:
+            target_vpc = candidates[0]
+ 
+        # 1.1 VPC Name (4m) - accept vpc-<name> or vpc-<name>-vpc (wizard auto-suffix)
+        vpc_name = get_name_tag(target_vpc.get('Tags')) if target_vpc else ""
+        name_ok = bool(target_vpc) and has_token(vpc_name, 'vpc') and has_token(vpc_name, name_token)
+        award_points("1.1 VPC Name", 4, 4 if name_ok else 0, vpc_name or "not found")
+ 
+        # 1.2 VPC CIDR Block (3m)
+        cidr_ok = bool(target_vpc) and target_vpc.get('CidrBlock') == '10.0.0.0/16'
+        award_points("1.2 VPC CIDR Block", 3, 3 if cidr_ok else 0,
+                      target_vpc.get('CidrBlock') if target_vpc else "no VPC found")
+ 
+        if target_vpc:
+            vpc_id = target_vpc['VpcId']
+            subnets = ec2.describe_subnets(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])['Subnets']
+            existing_cidrs = [s['CidrBlock'] for s in subnets]
+            azs_used = set(s['AvailabilityZone'] for s in subnets)
+ 
+            # 1.3 Availability Zones (4m for 3+, 2m for exactly 2, 0m for 1 or none)
+            if len(azs_used) >= 3:
+                az_points = 4
+            elif len(azs_used) == 2:
+                az_points = 2
+            else:
+                az_points = 0
+            award_points("1.3 Availability Zones", 4, az_points, f"{len(azs_used)} AZ(s) used")
+ 
+            # 1.4 Public Subnets (1m each for required CIDRs)
+            public_cidrs_required = ['10.0.1.0/24', '10.0.2.0/24', '10.0.3.0/24']
+            pub_points = sum(1 for c in public_cidrs_required if c in existing_cidrs)
+            award_points("1.4 Public Subnets", 3, pub_points, f"found {pub_points}/3 required CIDRs")
+ 
+            # 1.5 Private Subnets (1m each for required CIDRs)
+            private_cidrs_required = ['10.0.11.0/24', '10.0.12.0/24', '10.0.13.0/24']
+            priv_points = sum(1 for c in private_cidrs_required if c in existing_cidrs)
+            award_points("1.5 Private Subnets", 3, priv_points, f"found {priv_points}/3 required CIDRs")
+ 
+            public_subnets = [s for s in subnets if s['CidrBlock'] in public_cidrs_required]
+ 
+            # 1.6 Internet Gateway (1m created, 1m attached to this VPC)
+            all_igws = ec2.describe_internet_gateways()['InternetGateways']
+            attached_igws = ec2.describe_internet_gateways(
+                Filters=[{'Name': 'attachment.vpc-id', 'Values': [vpc_id]}]
+            )['InternetGateways']
+            igw_created = len(all_igws) > 0
+            igw_attached = len(attached_igws) > 0
+            if igw_attached:
+                igw = attached_igws[0]
+            igw_points = (1 if igw_created else 0) + (1 if igw_attached else 0)
+            award_points("1.6 Internet Gateway", 2, igw_points,
+                         f"created={igw_created}, attached={igw_attached}")
+ 
+            # 1.7 Public Route Table (1m route exists, 1m dest 0.0.0.0/0, 1m target = correct IGW)
+            rtbs = ec2.describe_route_tables(Filters=[{'Name': 'vpc-id', 'Values': [vpc_id]}])['RouteTables']
+            route_exists = dest_correct = target_correct = False
+            public_rtb = None
+            for rtb in rtbs:
+                for route in rtb.get('Routes', []):
+                    if str(route.get('GatewayId', '')).startswith('igw-'):
+                        route_exists = True
+                        if route.get('DestinationCidrBlock') == '0.0.0.0/0':
+                            dest_correct = True
+                        if igw and route.get('GatewayId') == igw['InternetGatewayId']:
+                            target_correct = True
+                        public_rtb = rtb
+            rtb_points = (1 if route_exists else 0) + (1 if dest_correct else 0) + (1 if target_correct else 0)
+            award_points("1.7 Public Route Table", 3, rtb_points,
+                         f"route={route_exists}, dest={dest_correct}, target={target_correct}")
+ 
+            # 1.8 Route Table Association (1m per public subnet associated, up to 3)
+            assoc_count = 0
+            if public_rtb:
+                associated_subnet_ids = [a.get('SubnetId') for a in public_rtb.get('Associations', [])
+                                          if a.get('SubnetId')]
+                assoc_count = sum(1 for ps in public_subnets if ps['SubnetId'] in associated_subnet_ids)
+            award_points("1.8 Route Table Association", 3, min(assoc_count, 3),
+                         f"{min(assoc_count, 3)}/3 public subnets associated")
+        else:
+            print("No target VPC found - awarding 0 for all remaining Question 1 criteria.")
+            award_points("1.3 Availability Zones", 4, 0)
+            award_points("1.4 Public Subnets", 3, 0)
+            award_points("1.5 Private Subnets", 3, 0)
+            award_points("1.6 Internet Gateway", 2, 0)
+            award_points("1.7 Public Route Table", 3, 0)
+            award_points("1.8 Route Table Association", 3, 0)
+ 
+    except Exception as e:
+        print(f"Error grading Question 1: {e}")
+ 
+    # ================================================================
+    # QUESTION 2: EC2 INSTANCE (25 marks)
+    # ================================================================
+    print_header("QUESTION 2: EC2 INSTANCE (25 marks)")
+ 
+    target_instance = None
+ 
+    try:
+        reservations = ec2.describe_instances(
+            Filters=[{'Name': 'instance-state-name', 'Values': ['running', 'pending', 'stopped']}]
+        )['Reservations']
+        all_instances = [i for r in reservations for i in r['Instances']]
+ 
+        # Exclude ASG-managed instances so Q2 grades the standalone instance, not a Q4 one.
+        standalone_instances = [
+            i for i in all_instances
+            if not any(t.get('Key') == 'aws:autoscaling:groupName' for t in i.get('Tags', []))
+        ]
+ 
+        candidates = [i for i in standalone_instances if has_token(get_name_tag(i.get('Tags')), name_token)]
+        if not candidates:
+            candidates = standalone_instances
+        if candidates:
+            running = [i for i in candidates if i['State']['Name'] == 'running']
+            target_instance = running[0] if running else candidates[0]
+ 
+        inst_name = get_name_tag(target_instance.get('Tags')) if target_instance else ""
+ 
+        # 2.1 Instance Name (3m)
+        name_ok = bool(target_instance) and has_token(inst_name, 'ec2') and has_token(inst_name, name_token)
+        award_points("2.1 Instance Name", 3, 3 if name_ok else 0, inst_name or "not found")
+ 
+        # 2.2 AMI (3m) - Amazon Linux 2023
+        ami_ok = False
+        ami_desc = "no instance found"
+        if target_instance:
+            q2_ami_id = target_instance['ImageId']
+            ami_desc = q2_ami_id
+            try:
+                images = ec2.describe_images(ImageIds=[q2_ami_id])['Images']
+                if images:
+                    ami_name = images[0].get('Name', '')
+                    ami_desc = ami_name
+                    if 'al2023' in normalize_name(ami_name):
+                        ami_ok = True
+            except Exception:
+                pass
+        award_points("2.2 AMI", 3, 3 if ami_ok else 0, ami_desc)
+ 
+        # 2.3 Instance Type (3m) - t3.large
+        if target_instance:
+            q2_instance_type = target_instance['InstanceType']
+        type_ok = q2_instance_type == 't3.large'
+        award_points("2.3 Instance Type", 3, 3 if type_ok else 0, q2_instance_type or "not found")
+ 
+        # 2.4 VPC/Subnet Placement (1m correct VPC, 1m public subnet from Q1)
+        vpc_match = subnet_match = False
+        if target_instance and target_vpc:
+            vpc_match = target_instance.get('VpcId') == target_vpc['VpcId']
+            public_subnet_ids = [s['SubnetId'] for s in public_subnets]
+            subnet_match = target_instance.get('SubnetId') in public_subnet_ids
+        award_points("2.4 VPC/Subnet Placement", 2, (1 if vpc_match else 0) + (1 if subnet_match else 0),
+                     f"vpc_match={vpc_match}, public_subnet={subnet_match}")
+ 
+        # 2.5 Public IP Auto-assign (1m)
+        public_ip_ok = bool(target_instance) and bool(target_instance.get('PublicIpAddress'))
+        award_points("2.5 Public IP Auto-assign", 1, 1 if public_ip_ok else 0)
+ 
+        # Resolve the EC2 security group for 2.6/2.7
+        ec2_sg = None
+        if target_instance:
+            sg_refs = target_instance.get('SecurityGroups', [])
+            if sg_refs:
+                sg_details = ec2.describe_security_groups(
+                    GroupIds=[sg['GroupId'] for sg in sg_refs]
+                )['SecurityGroups']
+                for sg in sg_details:
+                    if has_token(sg.get('GroupName', ''), name_token) and has_token(sg.get('GroupName', ''), 'sg'):
+                        ec2_sg = sg
+                        break
+                if not ec2_sg and sg_details:
+                    ec2_sg = sg_details[0]
+ 
+        # 2.6 Security Group Name (1m) - <name>-sg-ec2
+        sg_name_ok = bool(ec2_sg) and has_token(ec2_sg.get('GroupName', ''), name_token) \
+                    and has_token(ec2_sg.get('GroupName', ''), 'sg') and has_token(ec2_sg.get('GroupName', ''), 'ec2')
+        award_points("2.6 Security Group Name", 1, 1 if sg_name_ok else 0,
+                     ec2_sg.get('GroupName') if ec2_sg else "not found")
+ 
+        # 2.7 Security Group Rules (1m HTTP, 1m SSH, 1m MySQL)
+        http_ok = ssh_ok = mysql_ok = False
+        if ec2_sg:
+            for perm in ec2_sg.get('IpPermissions', []):
+                from_port, to_port = perm.get('FromPort'), perm.get('ToPort')
+                if from_port is not None and to_port is not None:
+                    if from_port <= 80 <= to_port:
+                        http_ok = True
+                    if from_port <= 22 <= to_port:
+                        ssh_ok = True
+                    if from_port <= 3306 <= to_port:
+                        mysql_ok = True
+        award_points("2.7 Security Group Rules", 3,
+                     (1 if http_ok else 0) + (1 if ssh_ok else 0) + (1 if mysql_ok else 0),
+                     f"HTTP={http_ok}, SSH={ssh_ok}, MySQL={mysql_ok}")
+ 
+        # 2.8 Root Volume (1m) - 15 GiB gp2
+        vol_ok = False
+        vol_desc = "not found"
+        if target_instance:
+            root_device = target_instance.get('RootDeviceName')
+            for bdm in target_instance.get('BlockDeviceMappings', []):
+                if bdm.get('DeviceName') == root_device and 'Ebs' in bdm:
+                    try:
+                        vols = ec2.describe_volumes(VolumeIds=[bdm['Ebs']['VolumeId']])['Volumes']
+                        if vols:
+                            v = vols[0]
+                            vol_desc = f"{v['Size']}GiB {v['VolumeType']}"
+                            if v['Size'] == 15 and v['VolumeType'] == 'gp2':
+                                vol_ok = True
+                    except Exception:
+                        pass
+        award_points("2.8 Root Volume", 1, 1 if vol_ok else 0, vol_desc)
+ 
+        # 2.9 IAM Instance Profile (1m attached, 3m specifically LabInstanceRole)
+        profile_attached = bool(target_instance) and bool(target_instance.get('IamInstanceProfile'))
+        profile_is_lab_role = False
+        profile_arn = ""
+        if profile_attached:
+            profile_arn = target_instance['IamInstanceProfile'].get('Arn', '')
+            profile_is_lab_role = 'labinstancerole' in normalize_name(profile_arn)
+        award_points("2.9 IAM Instance Profile", 4,
+                     (1 if profile_attached else 0) + (3 if profile_is_lab_role else 0),
+                     profile_arn or "not attached")
+ 
+        # 2.10 User Data Script (1m httpd installed, 1m httpd running/enabled, 2m personalised content)
+        httpd_installed = httpd_running = personalised = False
+        if target_instance:
+            try:
+                attr = ec2.describe_instance_attribute(
+                    InstanceId=target_instance['InstanceId'], Attribute='userData'
+                )
+                ud_value = attr.get('UserData', {}).get('Value')
+                if ud_value:
+                    q2_userdata = base64.b64decode(ud_value).decode('utf-8', errors='ignore')
+                    ud_lower = q2_userdata.lower()
+                    if 'httpd' in ud_lower and 'install' in ud_lower:
+                        httpd_installed = True
+                    if 'httpd' in ud_lower and 'systemctl' in ud_lower and \
+                       ('start' in ud_lower or 'enable' in ud_lower):
+                        httpd_running = True
+                    if has_token(q2_userdata, name_token):
+                        personalised = True
+            except Exception:
+                pass
+        award_points("2.10 User Data Script", 4,
+                     (1 if httpd_installed else 0) + (1 if httpd_running else 0) + (2 if personalised else 0),
+                     f"installed={httpd_installed}, running={httpd_running}, personalised={personalised}")
+ 
+        # Supplementary live check of the personalised web page (not separately scored)
+        if target_instance and target_instance.get('PublicIpAddress'):
+            url = f"http://{target_instance['PublicIpAddress']}/"
+            status_ok, keyword_found = check_website_detailed(url, student_name)
+            print(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
+ 
+    except Exception as e:
+        print(f"Error grading Question 2: {e}")
+ 
+    # ================================================================
+    # QUESTION 3: APPLICATION LOAD BALANCER (25 marks)
+    # ================================================================
+    print_header("QUESTION 3: APPLICATION LOAD BALANCER (25 marks)")
+ 
+    try:
+        tgs = elbv2.describe_target_groups()['TargetGroups']
+        tg_candidates = [tg for tg in tgs if has_token(tg.get('TargetGroupName', ''), name_token)]
+        if tg_candidates:
+            target_tg = tg_candidates[0]
+        tg_name = target_tg.get('TargetGroupName', '') if target_tg else ""
+ 
+        # 3.1 Target Group Name (3m)
+        tg_name_ok = bool(target_tg) and has_token(tg_name, 'tg') and has_token(tg_name, name_token)
+        award_points("3.1 Target Group Name", 3, 3 if tg_name_ok else 0, tg_name or "not found")
+ 
+        # 3.2 Target Type (3m) - Instances
+        type_ok = bool(target_tg) and target_tg.get('TargetType') == 'instance'
+        award_points("3.2 Target Type", 3, 3 if type_ok else 0,
+                     target_tg.get('TargetType') if target_tg else "not found")
+ 
+        # 3.3 TG Protocol/Port (1m HTTP, 1m port 80)
+        proto_ok = bool(target_tg) and target_tg.get('Protocol') == 'HTTP'
+        port_ok = bool(target_tg) and target_tg.get('Port') == 80
+        award_points("3.3 TG Protocol/Port", 2, (1 if proto_ok else 0) + (1 if port_ok else 0))
+ 
+        # 3.4 TG VPC (1m) - VPC from Q1
+        tg_vpc_ok = bool(target_tg) and bool(target_vpc) and target_tg.get('VpcId') == target_vpc['VpcId']
+        award_points("3.4 TG VPC", 1, 1 if tg_vpc_ok else 0)
+ 
+        # 3.5 Health Check (1m HTTP, 1m path /)
+        hc_proto_ok = bool(target_tg) and target_tg.get('HealthCheckProtocol') == 'HTTP'
+        hc_path_ok = bool(target_tg) and target_tg.get('HealthCheckPath') == '/'
+        award_points("3.5 Health Check", 2, (1 if hc_proto_ok else 0) + (1 if hc_path_ok else 0))
+ 
+        albs = elbv2.describe_load_balancers()['LoadBalancers']
+        alb_candidates = [a for a in albs if has_token(a.get('LoadBalancerName', ''), name_token)]
+        if alb_candidates:
+            target_alb = alb_candidates[0]
+        alb_name = target_alb.get('LoadBalancerName', '') if target_alb else ""
+ 
+        # 3.6 Load Balancer Name (3m)
+        alb_name_ok = bool(target_alb) and has_token(alb_name, 'alb') and has_token(alb_name, name_token)
+        award_points("3.6 Load Balancer Name", 3, 3 if alb_name_ok else 0, alb_name or "not found")
+ 
+        # 3.7 ALB Type/Scheme/IP (1m ALB + internet-facing, 1m IPv4)
+        type_scheme_ok = bool(target_alb) and target_alb.get('Type') == 'application' \
+                         and target_alb.get('Scheme') == 'internet-facing'
+        ip_ok = bool(target_alb) and target_alb.get('IpAddressType') == 'ipv4'
+        award_points("3.7 ALB Type/Scheme/IP", 2, (1 if type_scheme_ok else 0) + (1 if ip_ok else 0))
+ 
+        # 3.8 Availability Zones (1m per AZ with a Q1 public subnet selected, up to 2)
+        az_points = 0
+        if target_alb:
+            alb_azs = target_alb.get('AvailabilityZones', [])
+            public_subnet_ids = [s['SubnetId'] for s in public_subnets]
+            az_points = min(sum(1 for az in alb_azs if az.get('SubnetId') in public_subnet_ids), 2)
+        award_points("3.8 Availability Zones", 2, az_points, f"{az_points}/2 AZs with a public subnet")
+ 
+        # Resolve the ALB security group for 3.9 (and reuse for Q4's source check)
+        if target_alb and target_alb.get('SecurityGroups'):
+            sg_details = ec2.describe_security_groups(GroupIds=target_alb['SecurityGroups'])['SecurityGroups']
+            for sg in sg_details:
+                if has_token(sg.get('GroupName', ''), name_token) and has_token(sg.get('GroupName', ''), 'alb'):
+                    alb_sg = sg
+                    break
+            if not alb_sg and sg_details:
+                alb_sg = sg_details[0]
+ 
+        # 3.9 ALB Security Group (1m named correctly, 1m correct HTTP inbound rule)
+        alb_sg_name_ok = bool(alb_sg) and has_token(alb_sg.get('GroupName', ''), name_token) \
+                        and has_token(alb_sg.get('GroupName', ''), 'sg') and has_token(alb_sg.get('GroupName', ''), 'alb')
+        alb_sg_rule_ok = False
+        if alb_sg:
+            for perm in alb_sg.get('IpPermissions', []):
+                from_port, to_port = perm.get('FromPort'), perm.get('ToPort')
+                if from_port is not None and to_port is not None and from_port <= 80 <= to_port:
+                    alb_sg_rule_ok = True
+        award_points("3.9 ALB Security Group", 2, (1 if alb_sg_name_ok else 0) + (1 if alb_sg_rule_ok else 0),
+                     alb_sg.get('GroupName') if alb_sg else "not found")
+ 
+        # Listener / default action
+        listener_proto_ok = listener_port_ok = False
+        action_exists = action_forwards_correctly = False
+        if target_alb:
+            listeners = elbv2.describe_listeners(LoadBalancerArn=target_alb['LoadBalancerArn'])['Listeners']
+            if listeners:
+                listener = listeners[0]
+                listener_proto_ok = listener.get('Protocol') == 'HTTP'
+                listener_port_ok = listener.get('Port') == 80
+                for action in listener.get('DefaultActions', []):
+                    action_exists = True
+                    if target_tg and action.get('Type') == 'forward' and \
+                       action.get('TargetGroupArn') == target_tg.get('TargetGroupArn'):
+                        action_forwards_correctly = True
+ 
+        # 3.10 Listener (1m HTTP, 1m port 80)
+        award_points("3.10 Listener", 2, (1 if listener_proto_ok else 0) + (1 if listener_port_ok else 0))
+ 
+        # 3.11 Default Action (1m exists, 2m correctly forwards to the TG from Q3)
+        award_points("3.11 Default Action", 3, (1 if action_exists else 0) + (2 if action_forwards_correctly else 0),
+                     f"exists={action_exists}, forwards_to_correct_tg={action_forwards_correctly}")
+ 
+        # Supplementary live check via the ALB DNS name (not separately scored)
+        if target_alb and target_alb.get('DNSName'):
+            url = f"http://{target_alb['DNSName']}/"
+            status_ok, keyword_found = check_website_detailed(url, student_name)
+            print(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
+ 
+    except Exception as e:
+        print(f"Error grading Question 3: {e}")
+ 
+    # ================================================================
+    # QUESTION 4: AUTO SCALING GROUP (25 marks)
+    # ================================================================
+    print_header("QUESTION 4: AUTO SCALING GROUP (25 marks)")
+ 
+    lt_data = {}  # always defined, even when no Launch Template is found
+ 
+    try:
+        target_lt = None
+        lts = ec2.describe_launch_templates()['LaunchTemplates']
+        lt_candidates = [lt for lt in lts if has_token(lt.get('LaunchTemplateName', ''), name_token)]
+        if lt_candidates:
+            target_lt = lt_candidates[0]
+        lt_name = target_lt.get('LaunchTemplateName', '') if target_lt else ""
+ 
+        # 4.1 Launch Template Name (3m)
+        lt_name_ok = bool(target_lt) and has_token(lt_name, 'lt') and has_token(lt_name, name_token)
+        award_points("4.1 Launch Template Name", 3, 3 if lt_name_ok else 0, lt_name or "not found")
+ 
+        if target_lt:
+            versions = ec2.describe_launch_template_versions(
+                LaunchTemplateId=target_lt['LaunchTemplateId']
+            )['LaunchTemplateVersions']
+            if versions:
+                latest = sorted(versions, key=lambda v: v['VersionNumber'])[-1]
+                lt_data = latest.get('LaunchTemplateData', {})
+ 
+        # 4.2 LT Config Matches Q2 (4m all 3 match, 2m exactly 2, 0m 1 or fewer) - AMI/type/user data
+        lt_ami_match = bool(q2_ami_id) and lt_data.get('ImageId') == q2_ami_id
+        lt_type_match = bool(q2_instance_type) and lt_data.get('InstanceType') == q2_instance_type
+        lt_userdata_match = False
+        if lt_data.get('UserData') and q2_userdata:
+            try:
+                lt_ud_decoded = base64.b64decode(lt_data['UserData']).decode('utf-8', errors='ignore').lower()
+                if 'httpd' in lt_ud_decoded and 'httpd' in q2_userdata.lower():
+                    lt_userdata_match = True
+            except Exception:
+                pass
+        match_count = sum([lt_ami_match, lt_type_match, lt_userdata_match])
+        lt_match_points = 4 if match_count == 3 else (2 if match_count == 2 else 0)
+        award_points("4.2 LT Config Matches Q2", 4, lt_match_points,
+                     f"AMI={lt_ami_match}, type={lt_type_match}, userdata={lt_userdata_match}")
+ 
+        target_asg = None
+        asgs = asg_client.describe_auto_scaling_groups()['AutoScalingGroups']
+        asg_candidates = [a for a in asgs if has_token(a.get('AutoScalingGroupName', ''), name_token)]
+        if asg_candidates:
+            target_asg = asg_candidates[0]
+        asg_name = target_asg.get('AutoScalingGroupName', '') if target_asg else ""
+ 
+        # 4.3 ASG Name (3m)
+        asg_name_ok = bool(target_asg) and has_token(asg_name, 'asg') and has_token(asg_name, name_token)
+        award_points("4.3 ASG Name", 3, 3 if asg_name_ok else 0, asg_name or "not found")
+ 
+        # 4.4 ASG VPC (1m) - VPC from Q1
+        asg_vpc_ok = False
+        asg_subnet_ids = []
+        if target_asg:
+            asg_subnet_ids = [s for s in target_asg.get('VPCZoneIdentifier', '').split(',') if s]
+            if target_vpc and asg_subnet_ids:
+                try:
+                    subnet_info = ec2.describe_subnets(SubnetIds=asg_subnet_ids)['Subnets']
+                    asg_vpc_ok = all(s['VpcId'] == target_vpc['VpcId'] for s in subnet_info)
+                except Exception:
+                    pass
+        award_points("4.4 ASG VPC", 1, 1 if asg_vpc_ok else 0)
+ 
+        # 4.5 ASG Subnets (3m both in distinct AZs, 1m only one correct, 0m neither)
+        asg_sub_points = 0
+        if asg_subnet_ids:
+            public_subnet_ids = [s['SubnetId'] for s in public_subnets]
+            matched_subnets = [sid for sid in asg_subnet_ids if sid in public_subnet_ids]
+            try:
+                matched_info = ec2.describe_subnets(SubnetIds=matched_subnets)['Subnets'] if matched_subnets else []
+                distinct_azs = set(s['AvailabilityZone'] for s in matched_info)
+                if len(matched_subnets) >= 2 and len(distinct_azs) >= 2:
+                    asg_sub_points = 3
+                elif len(matched_subnets) == 1:
+                    asg_sub_points = 1
+            except Exception:
+                pass
+        award_points("4.5 ASG Subnets", 3, asg_sub_points)
+ 
+        # Resolve the ASG security group (attached via the Launch Template) for 4.6
+        asg_sg = None
+        lt_sg_ids = lt_data.get('SecurityGroupIds', [])
+        if lt_sg_ids:
+            try:
+                sg_details = ec2.describe_security_groups(GroupIds=lt_sg_ids)['SecurityGroups']
+                for sg in sg_details:
+                    if has_token(sg.get('GroupName', ''), name_token) and has_token(sg.get('GroupName', ''), 'asg'):
+                        asg_sg = sg
+                        break
+                if not asg_sg and sg_details:
+                    asg_sg = sg_details[0]
+            except Exception:
+                pass
+ 
+        # 4.6 ASG Security Group (1m named correctly, 2m port 80 allowed, 2m source is specifically the ALB SG)
+        asg_sg_name_ok = bool(asg_sg) and has_token(asg_sg.get('GroupName', ''), name_token) \
+                        and has_token(asg_sg.get('GroupName', ''), 'sg') and has_token(asg_sg.get('GroupName', ''), 'asg')
+        port80_ok = False
+        source_is_alb_sg = False
+        if asg_sg:
+            for perm in asg_sg.get('IpPermissions', []):
+                from_port, to_port = perm.get('FromPort'), perm.get('ToPort')
+                if from_port is not None and to_port is not None and from_port <= 80 <= to_port:
+                    port80_ok = True
+                    for pair in perm.get('UserIdGroupPairs', []):
+                        if alb_sg and pair.get('GroupId') == alb_sg.get('GroupId'):
+                            source_is_alb_sg = True
+                    for ip_range in perm.get('IpRanges', []):
+                        if ip_range.get('CidrIp') == '0.0.0.0/0':
+                            source_is_alb_sg = False  # open-to-the-world does not satisfy "from the ALB SG"
+        asg_sg_points = (1 if asg_sg_name_ok else 0) + (2 if port80_ok else 0) + (2 if source_is_alb_sg else 0)
+        award_points("4.6 ASG Security Group", 5, asg_sg_points,
+                     f"named={asg_sg_name_ok}, port80={port80_ok}, source_is_alb_sg={source_is_alb_sg}")
+ 
+        # 4.7 Capacity (3m all correct, 1m exactly 1 wrong, 0m 2+ wrong) - Min 1, Desired 1, Max 3
+        cap_points = 0
+        if target_asg:
+            min_ok = target_asg.get('MinSize') == 1
+            desired_ok = target_asg.get('DesiredCapacity') == 1
+            max_ok = target_asg.get('MaxSize') == 3
+            wrong_count = sum([not min_ok, not desired_ok, not max_ok])
+            cap_points = 3 if wrong_count == 0 else (1 if wrong_count == 1 else 0)
+        award_points("4.7 Capacity", 3, cap_points)
+ 
+        # 4.8 Target Group Attachment (1m a TG is attached, 2m it is specifically the TG from Q3)
+        tg_attached = tg_attached_correct = False
+        if target_asg:
+            attached_tg_arns = target_asg.get('TargetGroupARNs', [])
+            tg_attached = len(attached_tg_arns) > 0
+            if target_tg and target_tg.get('TargetGroupArn') in attached_tg_arns:
+                tg_attached_correct = True
+        award_points("4.8 Target Group Attachment", 3, (1 if tg_attached else 0) + (2 if tg_attached_correct else 0),
+                     f"attached={tg_attached}, correct_tg={tg_attached_correct}")
+ 
+    except Exception as e:
+        print(f"Error grading Question 4: {e}")
+ 
+    # ================================================================
+    # FINAL SUMMARY
+    # ================================================================
+    print_header("FINAL SCORE SUMMARY")
+    print(f"Student: {student_name}")
+    print(f"TOTAL SCORE: {SCORED_MARKS} / {TOTAL_MARKS}")
+    if TOTAL_MARKS > 0:
+        print(f"Percentage: {SCORED_MARKS / TOTAL_MARKS * 100:.1f}%")
+    print("\nNOTE: This auto-grader gives a first-pass score only. Per the marking")
+    print("rubric, if this output disagrees with the student's submitted screenshot")
+    print("evidence, refer to AMIT3253_Marking_Rubric.md as the reference for manual")
+    print("adjustment.")
+ 
+ 
+if __name__ == "__main__":
+    main()
