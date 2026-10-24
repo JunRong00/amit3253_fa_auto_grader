@@ -571,9 +571,9 @@ def main():
             target_asg = asg_candidates[0]
         asg_name = target_asg.get('AutoScalingGroupName', '') if target_asg else ""
  
-        # 4.3 ASG Name (3m)
+        # 4.3 ASG Name (1m)
         asg_name_ok = bool(target_asg) and has_token(asg_name, 'asg') and has_token(asg_name, name_token)
-        award_points("4.3 ASG Name", 3, 3 if asg_name_ok else 0, asg_name or "not found")
+        award_points("4.3 ASG Name", 1, 1 if asg_name_ok else 0, asg_name or "not found")
  
         # 4.4 ASG VPC (1m) - VPC from Q1
         asg_vpc_ok = False
@@ -658,6 +658,22 @@ def main():
                 tg_attached_correct = True
         award_points("4.8 Target Group Attachment", 3, (1 if tg_attached else 0) + (2 if tg_attached_correct else 0),
                      f"attached={tg_attached}, correct_tg={tg_attached_correct}")
+ 
+        # 4.9 Scaling Policy (1m target tracking on Average CPU Utilization, 1m target value exactly 70%)
+        policy_cpu_ok = policy_target_ok = False
+        if target_asg:
+            policies = asg_client.describe_policies(
+                AutoScalingGroupName=target_asg['AutoScalingGroupName']
+            ).get('ScalingPolicies', [])
+            tt_configs = [p.get('TargetTrackingConfiguration', {}) for p in policies
+                          if p.get('PolicyType') == 'TargetTrackingScaling']
+            cpu_configs = [c for c in tt_configs
+                           if c.get('PredefinedMetricSpecification', {}).get('PredefinedMetricType')
+                           == 'ASGAverageCPUUtilization']
+            policy_cpu_ok = bool(cpu_configs)
+            policy_target_ok = any(c.get('TargetValue') == 70 for c in (cpu_configs or tt_configs))
+        award_points("4.9 Scaling Policy", 2, (1 if policy_cpu_ok else 0) + (1 if policy_target_ok else 0),
+                     f"cpu_target_tracking={policy_cpu_ok}, target_70={policy_target_ok}")
  
     except Exception as e:
         print(f"Error grading Question 4: {e}")
