@@ -31,6 +31,7 @@ import boto3
  
 TOTAL_MARKS = 0
 SCORED_MARKS = 0
+QUESTION_SUBTOTALS = []  # (label, scored, total) per question
  
  
 def print_header(text):
@@ -77,10 +78,20 @@ def award_points(description, max_points, points_earned, details=""):
     else:
         mark = "[X]"
     suffix = f"  ({details})" if details else ""
-    print(f"{mark} {description}: {points_earned}/{max_points}{suffix}")
+    score = f"{points_earned}/{max_points}"
+    print(f"{mark:<4} {description + ':':<29} {score:>5}{suffix}")
     return points_earned
  
  
+def print_subtotal(label, start):
+    """Print and record the marks scored since `start` (a (scored, total) snapshot)."""
+    scored = SCORED_MARKS - start[0]
+    total = TOTAL_MARKS - start[1]
+    print("-" * 70)
+    print(f"{label} SUBTOTAL: {scored} / {total}")
+    QUESTION_SUBTOTALS.append((label, scored, total))
+
+
 def check_website_detailed(url, keyword):
     """Returns (status_ok, keyword_found) for a given URL. Never raises."""
     try:
@@ -119,6 +130,7 @@ def main():
     # QUESTION 1: VPC AND NETWORKING (25 marks)
     # ================================================================
     print_header("QUESTION 1: VPC AND NETWORKING (25 marks)")
+    q1_start = (SCORED_MARKS, TOTAL_MARKS)
  
     igw = None
  
@@ -219,11 +231,14 @@ def main():
  
     except Exception as e:
         print(f"Error grading Question 1: {e}")
+
+    print_subtotal("QUESTION 1", q1_start)
  
     # ================================================================
     # QUESTION 2: EC2 INSTANCE (25 marks)
     # ================================================================
     print_header("QUESTION 2: EC2 INSTANCE (25 marks)")
+    q2_start = (SCORED_MARKS, TOTAL_MARKS)
  
     target_instance = None
  
@@ -386,11 +401,14 @@ def main():
  
     except Exception as e:
         print(f"Error grading Question 2: {e}")
+
+    print_subtotal("QUESTION 2", q2_start)
  
     # ================================================================
     # QUESTION 3: APPLICATION LOAD BALANCER (25 marks)
     # ================================================================
     print_header("QUESTION 3: APPLICATION LOAD BALANCER (25 marks)")
+    q3_start = (SCORED_MARKS, TOTAL_MARKS)
  
     try:
         tgs = elbv2.describe_target_groups()['TargetGroups']
@@ -498,11 +516,14 @@ def main():
  
     except Exception as e:
         print(f"Error grading Question 3: {e}")
+
+    print_subtotal("QUESTION 3", q3_start)
  
     # ================================================================
     # QUESTION 4: AUTO SCALING GROUP (25 marks)
     # ================================================================
     print_header("QUESTION 4: AUTO SCALING GROUP (25 marks)")
+    q4_start = (SCORED_MARKS, TOTAL_MARKS)
  
     lt_data = {}  # always defined, even when no Launch Template is found
  
@@ -639,12 +660,16 @@ def main():
  
     except Exception as e:
         print(f"Error grading Question 4: {e}")
+
+    print_subtotal("QUESTION 4", q4_start)
  
     # ================================================================
     # FINAL SUMMARY
     # ================================================================
     print_header("FINAL SCORE SUMMARY")
     print(f"Student: {student_name}")
+    for label, scored, total in QUESTION_SUBTOTALS:
+        print(f"  {label}: {scored} / {total}")
     print(f"TOTAL SCORE: {SCORED_MARKS} / {TOTAL_MARKS}")
     if TOTAL_MARKS > 0:
         print(f"Percentage: {SCORED_MARKS / TOTAL_MARKS * 100:.1f}%")
