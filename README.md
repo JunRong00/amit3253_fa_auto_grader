@@ -38,7 +38,7 @@ The standalone instance is graded; ASG-managed instances are excluded.
 | 2.6 Security Group Name | 1 | `<name>-sg-ec2` |
 | 2.7 Security Group Rules | 3 | Inbound HTTP, SSH and MySQL (1 mark each) |
 | 2.8 Root Volume | 1 | 15 GiB `gp2` |
-| 2.9 IAM Instance Profile | 4 | Profile attached (1), and it is `LabInstanceRole` (3) |
+| 2.9 IAM Instance Profile | 4 | Profile attached (1), and it is `LabInstanceProfile` (the `LabRole` role) (3) |
 | 2.10 User Data Script | 4 | Installs httpd (1), starts/enables httpd (1), serves personalised content (2) |
 
 The script also fetches the instance's public IP and reports whether the page loads and shows the student's name (informational, not scored).

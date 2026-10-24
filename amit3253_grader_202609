@@ -358,13 +358,14 @@ def main():
                         pass
         award_points("2.8 Root Volume", 1, 1 if vol_ok else 0, vol_desc)
  
-        # 2.9 IAM Instance Profile (1m attached, 3m specifically LabInstanceRole)
+        # 2.9 IAM Instance Profile (1m attached, 3m specifically the Learner Lab profile)
+        # AWS Academy's profile is LabInstanceProfile, which wraps the LabRole role.
         profile_attached = bool(target_instance) and bool(target_instance.get('IamInstanceProfile'))
         profile_is_lab_role = False
         profile_arn = ""
         if profile_attached:
             profile_arn = target_instance['IamInstanceProfile'].get('Arn', '')
-            profile_is_lab_role = 'labinstancerole' in normalize_name(profile_arn)
+            profile_is_lab_role = 'labinstanceprofile' in normalize_name(profile_arn)
         award_points("2.9 IAM Instance Profile", 4,
                      (1 if profile_attached else 0) + (3 if profile_is_lab_role else 0),
                      profile_arn or "not attached")
