@@ -22,6 +22,8 @@ resources were created in), with boto3 credentials already configured
 """
  
 import base64
+import getpass
+import hashlib
 import re
 import ssl
 import urllib.error
@@ -32,6 +34,12 @@ import boto3
 TOTAL_MARKS = 0
 SCORED_MARKS = 0
 QUESTION_SUBTOTALS = []  # (label, scored, total) per question
+
+# Students only see scores; markers (password-protected) also see why each
+# criterion passed or failed. Only the SHA-256 of the marker password is stored.
+# To change it: python3 -c "import hashlib; print(hashlib.sha256(b'NEW_PASSWORD').hexdigest())"
+MARKER_PASSWORD_SHA256 = "9c8a99cf9cf5dcf80a03c0b6e960e07c084accc6a9131229af4a53bc17457531"
+SHOW_DETAILS = False
  
  
 def print_header(text):
@@ -77,7 +85,7 @@ def award_points(description, max_points, points_earned, details=""):
         mark = "[~]"
     else:
         mark = "[X]"
-    suffix = f"  ({details})" if details else ""
+    suffix = f"  ({details})" if details and SHOW_DETAILS else ""
     score = f"{points_earned}/{max_points}"
     print(f"{mark:<4} {description + ':':<29} {score:>5}{suffix}")
     return points_earned
@@ -90,6 +98,28 @@ def print_subtotal(label, start):
     print("-" * 70)
     print(f"{label} SUBTOTAL: {scored} / {total}")
     QUESTION_SUBTOTALS.append((label, scored, total))
+
+
+def detail(text):
+    """Print diagnostic output that only markers should see."""
+    if SHOW_DETAILS:
+        print(text)
+
+
+def choose_role():
+    """Ask whether a student or marker is running the script; markers must
+    enter the password. Returns True when details should be shown."""
+    role = input("Are you a (1) Student or (2) Marker? Enter 1 or 2: ").strip()
+    if role != "2":
+        return False
+    for _ in range(3):
+        password = getpass.getpass("Marker password: ")
+        if hashlib.sha256(password.encode()).hexdigest() == MARKER_PASSWORD_SHA256:
+            print("Marker mode: full grading details will be shown.")
+            return True
+        print("Incorrect password.")
+    print("Too many failed attempts - continuing in student mode.")
+    return False
 
 
 def check_website_detailed(url, keyword):
@@ -107,8 +137,9 @@ def check_website_detailed(url, keyword):
  
  
 def main():
-    global TOTAL_MARKS, SCORED_MARKS
+    global TOTAL_MARKS, SCORED_MARKS, SHOW_DETAILS
  
+    SHOW_DETAILS = choose_role()
     student_name = input("Enter Student Full Name: ").strip()
     name_token = student_name  # has_token()/normalize_name() absorb spacing/case/hyphen differences
  
@@ -221,7 +252,7 @@ def main():
             award_points("1.8 Route Table Association", 3, min(assoc_count, 3),
                          f"{min(assoc_count, 3)}/3 public subnets associated")
         else:
-            print("No target VPC found - awarding 0 for all remaining Question 1 criteria.")
+            detail("No target VPC found - awarding 0 for all remaining Question 1 criteria.")
             award_points("1.3 Availability Zones", 4, 0)
             award_points("1.4 Public Subnets", 3, 0)
             award_points("1.5 Private Subnets", 3, 0)
@@ -230,7 +261,7 @@ def main():
             award_points("1.8 Route Table Association", 3, 0)
  
     except Exception as e:
-        print(f"Error grading Question 1: {e}")
+        print(f"Error grading Question 1" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
 
     print_subtotal("QUESTION 1", q1_start)
  
@@ -398,10 +429,10 @@ def main():
         if target_instance and target_instance.get('PublicIpAddress'):
             url = f"http://{target_instance['PublicIpAddress']}/"
             status_ok, keyword_found = check_website_detailed(url, student_name)
-            print(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
+            detail(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
  
     except Exception as e:
-        print(f"Error grading Question 2: {e}")
+        print(f"Error grading Question 2" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
 
     print_subtotal("QUESTION 2", q2_start)
  
@@ -513,10 +544,10 @@ def main():
         if target_alb and target_alb.get('DNSName'):
             url = f"http://{target_alb['DNSName']}/"
             status_ok, keyword_found = check_website_detailed(url, student_name)
-            print(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
+            detail(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
  
     except Exception as e:
-        print(f"Error grading Question 3: {e}")
+        print(f"Error grading Question 3" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
 
     print_subtotal("QUESTION 3", q3_start)
  
@@ -676,7 +707,7 @@ def main():
                      f"cpu_target_tracking={policy_cpu_ok}, target_70={policy_target_ok}")
  
     except Exception as e:
-        print(f"Error grading Question 4: {e}")
+        print(f"Error grading Question 4" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
 
     print_subtotal("QUESTION 4", q4_start)
  

@@ -95,28 +95,49 @@ Run the grader inside the student's AWS Academy Learner Lab session, in the same
 python3 amit3253_grader_202609
 ```
 
-Enter the student's full name when prompted:
+Choose a role, then enter the student's full name:
 
 ```
+Are you a (1) Student or (2) Marker? Enter 1 or 2: 1
 Enter Student Full Name: Jane Doe
 ```
 
-The script prints a criterion-by-criterion breakdown for each question, followed by the final score.
+The script prints a criterion-by-criterion score for each question, a subtotal per question, and the final score.
 
-### Sample Output
+### Student and Marker Modes
+
+- **Student** (option 1): shows each criterion's score only. The reasons behind it (what was found, which checks were `True`/`False`, live website checks, error messages) are hidden.
+- **Marker** (option 2): asks for the marker password and shows the full details. After 3 wrong attempts the script continues in student mode.
+
+Only a SHA-256 hash of the marker password is stored in the script (`MARKER_PASSWORD_SHA256`). To change the password, generate a new hash and replace that value:
+
+```bash
+python3 -c "import hashlib; print(hashlib.sha256(b'NEW_PASSWORD').hexdigest())"
+```
+
+This hides details from students during normal use, but it is not tamper-proof: anyone who can edit the script can turn marker mode on.
+
+### Sample Output (Marker Mode)
 
 ```
 ======================================================================
 QUESTION 1: VPC AND NETWORKING (25 marks)
 ======================================================================
-[OK] 1.1 VPC Name: 4/4  (vpc-janedoe-vpc)
-[OK] 1.2 VPC CIDR Block: 3/3  (10.0.0.0/16)
-[~] 1.3 Availability Zones: 2/4  (2 AZ(s) used)
+[OK] 1.1 VPC Name:                   4/4  (vpc-janedoe-vpc)
+[OK] 1.2 VPC CIDR Block:             3/3  (10.0.0.0/16)
+[~]  1.3 Availability Zones:         2/4  (2 AZ(s) used)
+...
+----------------------------------------------------------------------
+QUESTION 1 SUBTOTAL: 20 / 25
 ...
 ======================================================================
 FINAL SCORE SUMMARY
 ======================================================================
 Student: Jane Doe
+  QUESTION 1: 20 / 25
+  QUESTION 2: 22 / 25
+  QUESTION 3: 21 / 25
+  QUESTION 4: 19 / 25
 TOTAL SCORE: 82 / 100
 Percentage: 82.0%
 ```
