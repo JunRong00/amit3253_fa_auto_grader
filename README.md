@@ -59,8 +59,6 @@ The script also fetches the instance's public IP and reports whether the page lo
 | 3.10 Listener | 2 | HTTP, port 80 |
 | 3.11 Default Action | 3 | Action exists (1), forwards to the Q3 target group (2) |
 
-The ALB DNS name is also fetched as an informational live check.
-
 ### Question 4 — Auto Scaling Group (25 marks)
 
 | Criterion | Marks | Expected |
@@ -95,37 +93,23 @@ Run the grader inside the student's AWS Academy Learner Lab session, in the same
 python3 amit3253_grader_202609
 ```
 
-Choose a role, then enter the student's full name:
+Enter the student's full name when prompted:
 
 ```
-Are you a (1) Student or (2) Marker? Enter 1 or 2: 1
 Enter Student Full Name: Jane Doe
 ```
 
-The script prints a criterion-by-criterion score for each question, a subtotal per question, and the final score.
+The script prints each criterion's score together with what it requires, so students can check their own setup. It does not show what it actually found, such as which part of a criterion failed. Each question ends with a subtotal, followed by the final score.
 
-### Student and Marker Modes
-
-- **Student** (option 1): shows each criterion's score only. The reasons behind it (what was found, which checks were `True`/`False`, live website checks, error messages) are hidden.
-- **Marker** (option 2): asks for the marker password and shows the full details. After 3 wrong attempts the script continues in student mode.
-
-Only a SHA-256 hash of the marker password is stored in the script (`MARKER_PASSWORD_SHA256`). To change the password, generate a new hash and replace that value:
-
-```bash
-python3 -c "import hashlib; print(hashlib.sha256(b'NEW_PASSWORD').hexdigest())"
-```
-
-This hides details from students during normal use, but it is not tamper-proof: anyone who can edit the script can turn marker mode on.
-
-### Sample Output (Marker Mode)
+### Sample Output
 
 ```
 ======================================================================
 QUESTION 1: VPC AND NETWORKING (25 marks)
 ======================================================================
-[OK] 1.1 VPC Name:                   4/4  (vpc-janedoe-vpc)
-[OK] 1.2 VPC CIDR Block:             3/3  (10.0.0.0/16)
-[~]  1.3 Availability Zones:         2/4  (2 AZ(s) used)
+[OK] 1.1 VPC Name:                   4/4  Requires: vpc-<yourname>
+[OK] 1.2 VPC CIDR Block:             3/3  Requires: CIDR 10.0.0.0/16
+[~]  1.3 Availability Zones:         2/4  Requires: subnets in 3 AZs
 ...
 ----------------------------------------------------------------------
 QUESTION 1 SUBTOTAL: 20 / 25

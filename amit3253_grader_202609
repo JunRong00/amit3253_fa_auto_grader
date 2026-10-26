@@ -22,12 +22,7 @@ resources were created in), with boto3 credentials already configured
 """
  
 import base64
-import getpass
-import hashlib
 import re
-import ssl
-import urllib.error
-import urllib.request
  
 import boto3
  
@@ -35,11 +30,48 @@ TOTAL_MARKS = 0
 SCORED_MARKS = 0
 QUESTION_SUBTOTALS = []  # (label, scored, total) per question
 
-# Students only see scores; markers (password-protected) also see why each
-# criterion passed or failed. Only the SHA-256 of the marker password is stored.
-# To change it: python3 -c "import hashlib; print(hashlib.sha256(b'NEW_PASSWORD').hexdigest())"
-MARKER_PASSWORD_SHA256 = "9c8a99cf9cf5dcf80a03c0b6e960e07c084accc6a9131229af4a53bc17457531"
-SHOW_DETAILS = False
+# What each criterion expects, printed next to its score so students can check
+# their own setup. What the grader actually found is not shown.
+REQUIREMENTS = {
+    "1.1": "vpc-<yourname>",
+    "1.2": "CIDR 10.0.0.0/16",
+    "1.3": "subnets in 3 AZs",
+    "1.4": "10.0.1.0/24, 10.0.2.0/24, 10.0.3.0/24",
+    "1.5": "10.0.11.0/24, 10.0.12.0/24, 10.0.13.0/24",
+    "1.6": "created and attached to the VPC",
+    "1.7": "0.0.0.0/0 routed to the VPC's IGW",
+    "1.8": "associated with all 3 public subnets",
+    "2.1": "ec2-<yourname>",
+    "2.2": "Amazon Linux 2023",
+    "2.3": "t3.large",
+    "2.4": "Q1 VPC, public subnet",
+    "2.5": "public IP assigned",
+    "2.6": "<yourname>-sg-ec2",
+    "2.7": "inbound HTTP, SSH, MySQL",
+    "2.8": "15 GiB gp2",
+    "2.9": "LabInstanceProfile",
+    "2.10": "installs and runs httpd, personalised page",
+    "3.1": "tg-<yourname>",
+    "3.2": "instance",
+    "3.3": "HTTP, port 80",
+    "3.4": "Q1 VPC",
+    "3.5": "HTTP, path /",
+    "3.6": "alb-<yourname>",
+    "3.7": "Application, internet-facing, IPv4",
+    "3.8": "2 AZs, Q1 public subnets",
+    "3.9": "<yourname>-sg-alb, inbound HTTP",
+    "3.10": "HTTP, port 80",
+    "3.11": "forwards to the Q3 target group",
+    "4.1": "lt-<yourname>",
+    "4.2": "same AMI, instance type and user data as Q2",
+    "4.3": "asg-<yourname>",
+    "4.4": "Q1 VPC",
+    "4.5": "2 public subnets in different AZs",
+    "4.6": "<yourname>-sg-asg, port 80 from the ALB SG",
+    "4.7": "Min 1, Desired 1, Max 3",
+    "4.8": "the Q3 target group",
+    "4.9": "CPU target tracking, target 70%",
+}
  
  
 def print_header(text):
@@ -85,7 +117,10 @@ def award_points(description, max_points, points_earned, details=""):
         mark = "[~]"
     else:
         mark = "[X]"
-    suffix = f"  ({details})" if details and SHOW_DETAILS else ""
+    # `details` (what was found) is deliberately not printed; callers keep
+    # passing it so it is easy to print again when debugging the grader.
+    requirement = REQUIREMENTS.get(description.split()[0], "")
+    suffix = f"  Requires: {requirement}" if requirement else ""
     score = f"{points_earned}/{max_points}"
     print(f"{mark:<4} {description + ':':<29} {score:>5}{suffix}")
     return points_earned
@@ -100,46 +135,11 @@ def print_subtotal(label, start):
     QUESTION_SUBTOTALS.append((label, scored, total))
 
 
-def detail(text):
-    """Print diagnostic output that only markers should see."""
-    if SHOW_DETAILS:
-        print(text)
-
-
-def choose_role():
-    """Ask whether a student or marker is running the script; markers must
-    enter the password. Returns True when details should be shown."""
-    role = input("Are you a (1) Student or (2) Marker? Enter 1 or 2: ").strip()
-    if role != "2":
-        return False
-    for _ in range(3):
-        password = getpass.getpass("Marker password: ")
-        if hashlib.sha256(password.encode()).hexdigest() == MARKER_PASSWORD_SHA256:
-            print("Marker mode: full grading details will be shown.")
-            return True
-        print("Incorrect password.")
-    print("Too many failed attempts - continuing in student mode.")
-    return False
-
-
-def check_website_detailed(url, keyword):
-    """Returns (status_ok, keyword_found) for a given URL. Never raises."""
-    try:
-        ctx = ssl._create_unverified_context()
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        resp = urllib.request.urlopen(req, timeout=10, context=ctx)
-        status_ok = resp.status == 200
-        body = resp.read().decode('utf-8', errors='ignore')
-        keyword_found = normalize_name(keyword) in normalize_name(body)
-        return status_ok, keyword_found
-    except Exception:
-        return False, False
- 
- 
 def main():
-    global TOTAL_MARKS, SCORED_MARKS, SHOW_DETAILS
+    global TOTAL_MARKS, SCORED_MARKS
  
-    SHOW_DETAILS = choose_role()
+    print_header("AMIT3253 CLOUD COMPUTING - AUTO GRADER (V8 - PARTIAL MARKS)")
+ 
     student_name = input("Enter Student Full Name: ").strip()
     name_token = student_name  # has_token()/normalize_name() absorb spacing/case/hyphen differences
  
@@ -252,7 +252,6 @@ def main():
             award_points("1.8 Route Table Association", 3, min(assoc_count, 3),
                          f"{min(assoc_count, 3)}/3 public subnets associated")
         else:
-            detail("No target VPC found - awarding 0 for all remaining Question 1 criteria.")
             award_points("1.3 Availability Zones", 4, 0)
             award_points("1.4 Public Subnets", 3, 0)
             award_points("1.5 Private Subnets", 3, 0)
@@ -261,7 +260,7 @@ def main():
             award_points("1.8 Route Table Association", 3, 0)
  
     except Exception as e:
-        print(f"Error grading Question 1" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
+        print("Error grading Question 1 - ask your marker to check.")
 
     print_subtotal("QUESTION 1", q1_start)
  
@@ -425,14 +424,8 @@ def main():
                      (1 if httpd_installed else 0) + (1 if httpd_running else 0) + (2 if personalised else 0),
                      f"installed={httpd_installed}, running={httpd_running}, personalised={personalised}")
  
-        # Supplementary live check of the personalised web page (not separately scored)
-        if target_instance and target_instance.get('PublicIpAddress'):
-            url = f"http://{target_instance['PublicIpAddress']}/"
-            status_ok, keyword_found = check_website_detailed(url, student_name)
-            detail(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
- 
     except Exception as e:
-        print(f"Error grading Question 2" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
+        print("Error grading Question 2 - ask your marker to check.")
 
     print_subtotal("QUESTION 2", q2_start)
  
@@ -540,14 +533,8 @@ def main():
         award_points("3.11 Default Action", 3, (1 if action_exists else 0) + (2 if action_forwards_correctly else 0),
                      f"exists={action_exists}, forwards_to_correct_tg={action_forwards_correctly}")
  
-        # Supplementary live check via the ALB DNS name (not separately scored)
-        if target_alb and target_alb.get('DNSName'):
-            url = f"http://{target_alb['DNSName']}/"
-            status_ok, keyword_found = check_website_detailed(url, student_name)
-            detail(f"    [info] Live check {url}: HTTP OK={status_ok}, name found={keyword_found}")
- 
     except Exception as e:
-        print(f"Error grading Question 3" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
+        print("Error grading Question 3 - ask your marker to check.")
 
     print_subtotal("QUESTION 3", q3_start)
  
@@ -707,7 +694,7 @@ def main():
                      f"cpu_target_tracking={policy_cpu_ok}, target_70={policy_target_ok}")
  
     except Exception as e:
-        print(f"Error grading Question 4" + (f": {e}" if SHOW_DETAILS else " - ask your marker to check."))
+        print("Error grading Question 4 - ask your marker to check.")
 
     print_subtotal("QUESTION 4", q4_start)
  
