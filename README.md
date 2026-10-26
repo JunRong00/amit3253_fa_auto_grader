@@ -30,15 +30,15 @@ The standalone instance is graded; ASG-managed instances are excluded.
 
 | Criterion | Marks | Expected |
 |-----------|-------|----------|
-| 2.1 Instance Name | 2 | Contains `ec2` and the student's name |
+| 2.1 Instance Name | 1 | Contains `ec2` and the student's name |
 | 2.2 AMI | 3 | Amazon Linux 2023 |
-| 2.3 Instance Type | 3 | `t3.large` |
+| 2.3 Instance Type | 2 | `t3.large` |
 | 2.4 VPC/Subnet Placement | 2 | In the Q1 VPC, in a Q1 public subnet |
 | 2.5 Public IP Auto-assign | 1 | Instance has a public IP |
 | 2.6 Security Group Name | 1 | `<name>-sg-ec2` |
-| 2.7 Security Group Rules | 3 | Inbound HTTP, SSH and MySQL (1 mark each) |
+| 2.7 Security Group Rules | 6 | Inbound HTTP, SSH and MySQL: per rule, port open (1) and source `0.0.0.0/0` (1) |
 | 2.8 Root Volume | 2 | 15 GiB (1), `gp2` (1) |
-| 2.9 IAM Instance Profile | 4 | Profile attached (1), and it is `LabInstanceProfile` (the `LabRole` role) (3) |
+| 2.9 IAM Instance Profile | 3 | Profile attached (1), and it is `LabInstanceProfile` (the `LabRole` role) (2) |
 | 2.10 User Data Script | 4 | Installs httpd (1), starts/enables httpd (1), serves personalised content (2) |
 
 The script also fetches the instance's public IP and reports whether the page loads and shows the student's name (informational, not scored).
@@ -131,7 +131,7 @@ Percentage: 82.0%
 
 ## Notes
 
-- The auto-grader gives a **first-pass score only**. If its output disagrees with the student's submitted screenshot evidence, the marking rubric (`AMIT3253_Marking_Rubric.md`) is the reference for manual adjustment.
+- The auto-grader gives a **first-pass score only**. If its output disagrees with the student's submitted screenshot evidence, the marking scheme is the reference for manual adjustment.
 - The script makes read-only AWS API calls; it never creates, modifies or deletes resources.
 - HTTP checks use a 10-second timeout and an unverified SSL context, so unreachable sites register as failures instead of hanging the grader.
 - If a question's AWS API calls raise an exception (for example, missing permissions), the error is printed and grading continues with the remaining questions.

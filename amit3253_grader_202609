@@ -10,11 +10,10 @@ Grades a student's deployed AWS resources against the four exam questions:
   Question 4 - Auto Scaling Group         (25 marks)
   TOTAL                                   (100 marks)
  
-This script is a first-pass grader only. Per the marking rubric
-(AMIT3253_Marking_Rubric.md), if the auto-grader's output disagrees with the
-student's submitted screenshot evidence, the rubric is the reference for
-manual adjustment - run this script first, then reconcile any discrepancy
-by hand using the rubric.
+This script is a first-pass grader only. If the auto-grader's output
+disagrees with the student's submitted screenshot evidence, the marking
+scheme is the reference for manual adjustment - run this script first, then
+reconcile any discrepancy by hand using the marking scheme.
  
 Run inside the student's AWS Academy Learner Lab session (same region the
 resources were created in), with boto3 credentials already configured
@@ -47,7 +46,7 @@ REQUIREMENTS = {
     "2.4": "Q1 VPC, public subnet",
     "2.5": "public IP assigned",
     "2.6": "<yourname>-sg-ec2",
-    "2.7": "inbound HTTP, SSH, MySQL",
+    "2.7": "inbound HTTP, SSH, MySQL from 0.0.0.0/0",
     "2.8": "15 GiB gp2",
     "2.9": "LabInstanceProfile",
     "2.10": "installs and runs httpd, personalised page",
@@ -294,9 +293,9 @@ def main():
  
         inst_name = get_name_tag(target_instance.get('Tags')) if target_instance else ""
  
-        # 2.1 Instance Name (2m)
+        # 2.1 Instance Name (1m)
         name_ok = bool(target_instance) and has_token(inst_name, 'ec2') and has_token(inst_name, name_token)
-        award_points("2.1 Instance Name", 2, 2 if name_ok else 0, inst_name or "not found")
+        award_points("2.1 Instance Name", 1, 1 if name_ok else 0, inst_name or "not found")
  
         # 2.2 AMI (3m) - Amazon Linux 2023
         ami_ok = False
@@ -315,11 +314,11 @@ def main():
                 pass
         award_points("2.2 AMI", 3, 3 if ami_ok else 0, ami_desc)
  
-        # 2.3 Instance Type (3m) - t3.large
+        # 2.3 Instance Type (2m) - t3.large
         if target_instance:
             q2_instance_type = target_instance['InstanceType']
         type_ok = q2_instance_type == 't3.large'
-        award_points("2.3 Instance Type", 3, 3 if type_ok else 0, q2_instance_type or "not found")
+        award_points("2.3 Instance Type", 2, 2 if type_ok else 0, q2_instance_type or "not found")
  
         # 2.4 VPC/Subnet Placement (1m correct VPC, 1m public subnet from Q1)
         vpc_match = subnet_match = False
@@ -355,21 +354,20 @@ def main():
         award_points("2.6 Security Group Name", 1, 1 if sg_name_ok else 0,
                      ec2_sg.get('GroupName') if ec2_sg else "not found")
  
-        # 2.7 Security Group Rules (1m HTTP, 1m SSH, 1m MySQL)
-        http_ok = ssh_ok = mysql_ok = False
-        if ec2_sg:
-            for perm in ec2_sg.get('IpPermissions', []):
+        # 2.7 Security Group Rules (per rule: 1m port open, 1m source 0.0.0.0/0) - HTTP, SSH, MySQL
+        rule_checks = {}
+        for label, port in (('HTTP', 80), ('SSH', 22), ('MySQL', 3306)):
+            port_open = from_anywhere = False
+            for perm in (ec2_sg.get('IpPermissions', []) if ec2_sg else []):
                 from_port, to_port = perm.get('FromPort'), perm.get('ToPort')
-                if from_port is not None and to_port is not None:
-                    if from_port <= 80 <= to_port:
-                        http_ok = True
-                    if from_port <= 22 <= to_port:
-                        ssh_ok = True
-                    if from_port <= 3306 <= to_port:
-                        mysql_ok = True
-        award_points("2.7 Security Group Rules", 3,
-                     (1 if http_ok else 0) + (1 if ssh_ok else 0) + (1 if mysql_ok else 0),
-                     f"HTTP={http_ok}, SSH={ssh_ok}, MySQL={mysql_ok}")
+                if from_port is not None and to_port is not None and from_port <= port <= to_port:
+                    port_open = True
+                    if any(r.get('CidrIp') == '0.0.0.0/0' for r in perm.get('IpRanges', [])):
+                        from_anywhere = True
+            rule_checks[label] = (port_open, from_anywhere)
+        award_points("2.7 Security Group Rules", 6,
+                     sum((1 if p else 0) + (1 if a else 0) for p, a in rule_checks.values()),
+                     ", ".join(f"{k}: port={p}, anywhere={a}" for k, (p, a) in rule_checks.items()))
  
         # 2.8 Root Volume (1m 15 GiB, 1m gp2)
         size_ok = type_ok = False
@@ -389,7 +387,7 @@ def main():
                         pass
         award_points("2.8 Root Volume", 2, (1 if size_ok else 0) + (1 if type_ok else 0), vol_desc)
  
-        # 2.9 IAM Instance Profile (1m attached, 3m specifically the Learner Lab profile)
+        # 2.9 IAM Instance Profile (1m attached, 2m specifically the Learner Lab profile)
         # AWS Academy's profile is LabInstanceProfile, which wraps the LabRole role.
         profile_attached = bool(target_instance) and bool(target_instance.get('IamInstanceProfile'))
         profile_is_lab_role = False
@@ -397,8 +395,8 @@ def main():
         if profile_attached:
             profile_arn = target_instance['IamInstanceProfile'].get('Arn', '')
             profile_is_lab_role = 'labinstanceprofile' in normalize_name(profile_arn)
-        award_points("2.9 IAM Instance Profile", 4,
-                     (1 if profile_attached else 0) + (3 if profile_is_lab_role else 0),
+        award_points("2.9 IAM Instance Profile", 3,
+                     (1 if profile_attached else 0) + (2 if profile_is_lab_role else 0),
                      profile_arn or "not attached")
  
         # 2.10 User Data Script (1m httpd installed, 1m httpd running/enabled, 2m personalised content)
@@ -723,10 +721,9 @@ def main():
     print(f"TOTAL SCORE: {SCORED_MARKS} / {TOTAL_MARKS}")
     if TOTAL_MARKS > 0:
         print(f"Percentage: {SCORED_MARKS / TOTAL_MARKS * 100:.1f}%")
-    print("\nNOTE: This auto-grader gives a first-pass score only. Per the marking")
-    print("rubric, if this output disagrees with the student's submitted screenshot")
-    print("evidence, refer to AMIT3253_Marking_Rubric.md as the reference for manual")
-    print("adjustment.")
+    print("\nNOTE: This auto-grader gives a first-pass score only. If this output")
+    print("disagrees with the student's submitted screenshot evidence, the marking")
+    print("scheme is the reference for manual adjustment.")
  
  
 if __name__ == "__main__":
