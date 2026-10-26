@@ -294,9 +294,9 @@ def main():
  
         inst_name = get_name_tag(target_instance.get('Tags')) if target_instance else ""
  
-        # 2.1 Instance Name (3m)
+        # 2.1 Instance Name (2m)
         name_ok = bool(target_instance) and has_token(inst_name, 'ec2') and has_token(inst_name, name_token)
-        award_points("2.1 Instance Name", 3, 3 if name_ok else 0, inst_name or "not found")
+        award_points("2.1 Instance Name", 2, 2 if name_ok else 0, inst_name or "not found")
  
         # 2.2 AMI (3m) - Amazon Linux 2023
         ami_ok = False
@@ -371,8 +371,8 @@ def main():
                      (1 if http_ok else 0) + (1 if ssh_ok else 0) + (1 if mysql_ok else 0),
                      f"HTTP={http_ok}, SSH={ssh_ok}, MySQL={mysql_ok}")
  
-        # 2.8 Root Volume (1m) - 15 GiB gp2
-        vol_ok = False
+        # 2.8 Root Volume (1m 15 GiB, 1m gp2)
+        size_ok = type_ok = False
         vol_desc = "not found"
         if target_instance:
             root_device = target_instance.get('RootDeviceName')
@@ -383,11 +383,11 @@ def main():
                         if vols:
                             v = vols[0]
                             vol_desc = f"{v['Size']}GiB {v['VolumeType']}"
-                            if v['Size'] == 15 and v['VolumeType'] == 'gp2':
-                                vol_ok = True
+                            size_ok = v['Size'] == 15
+                            type_ok = v['VolumeType'] == 'gp2'
                     except Exception:
                         pass
-        award_points("2.8 Root Volume", 1, 1 if vol_ok else 0, vol_desc)
+        award_points("2.8 Root Volume", 2, (1 if size_ok else 0) + (1 if type_ok else 0), vol_desc)
  
         # 2.9 IAM Instance Profile (1m attached, 3m specifically the Learner Lab profile)
         # AWS Academy's profile is LabInstanceProfile, which wraps the LabRole role.
