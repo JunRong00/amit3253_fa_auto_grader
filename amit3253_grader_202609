@@ -638,7 +638,7 @@ def main():
             except Exception:
                 pass
  
-        # 4.6 ASG Security Group (1m named correctly, 2m port 80 allowed, 2m source is specifically the ALB SG)
+        # 4.6 ASG Security Group (1m named correctly, 1m port 80 allowed, 2m source is specifically the ALB SG)
         asg_sg_name_ok = bool(asg_sg) and has_token(asg_sg.get('GroupName', ''), name_token) \
                         and has_token(asg_sg.get('GroupName', ''), 'sg') and has_token(asg_sg.get('GroupName', ''), 'asg')
         port80_ok = False
@@ -654,8 +654,8 @@ def main():
                     for ip_range in perm.get('IpRanges', []):
                         if ip_range.get('CidrIp') == '0.0.0.0/0':
                             source_is_alb_sg = False  # open-to-the-world does not satisfy "from the ALB SG"
-        asg_sg_points = (1 if asg_sg_name_ok else 0) + (2 if port80_ok else 0) + (2 if source_is_alb_sg else 0)
-        award_points("4.6 ASG Security Group", 5, asg_sg_points,
+        asg_sg_points = (1 if asg_sg_name_ok else 0) + (1 if port80_ok else 0) + (2 if source_is_alb_sg else 0)
+        award_points("4.6 ASG Security Group", 4, asg_sg_points,
                      f"named={asg_sg_name_ok}, port80={port80_ok}, source_is_alb_sg={source_is_alb_sg}")
  
         # 4.7 Capacity (3m all correct, 1m exactly 1 wrong, 0m 2+ wrong) - Min 1, Desired 1, Max 3
@@ -694,7 +694,7 @@ def main():
         award_points("4.9 Scaling Policy", 2, (1 if policy_cpu_ok else 0) + (1 if policy_target_ok else 0),
                      f"cpu_target_tracking={policy_cpu_ok}, target_70={policy_target_ok}")
  
-        # 4.10 Healthy Targets (1m an ASG instance is registered in the Q3 TG, 1m one of them is healthy)
+        # 4.10 Healthy Targets (1m an ASG instance is registered in the Q3 TG, 2m one of them is healthy)
         asg_target_registered = asg_target_healthy = False
         if target_asg and target_tg:
             asg_instance_ids = {i['InstanceId'] for i in target_asg.get('Instances', [])}
@@ -704,8 +704,8 @@ def main():
             asg_targets = [h for h in health if h.get('Target', {}).get('Id') in asg_instance_ids]
             asg_target_registered = bool(asg_targets)
             asg_target_healthy = any(h.get('TargetHealth', {}).get('State') == 'healthy' for h in asg_targets)
-        award_points("4.10 Healthy Targets", 2,
-                     (1 if asg_target_registered else 0) + (1 if asg_target_healthy else 0),
+        award_points("4.10 Healthy Targets", 3,
+                     (1 if asg_target_registered else 0) + (2 if asg_target_healthy else 0),
                      f"registered={asg_target_registered}, healthy={asg_target_healthy}")
  
     except Exception as e:

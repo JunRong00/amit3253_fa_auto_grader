@@ -68,11 +68,11 @@ The script also fetches the instance's public IP and reports whether the page lo
 | 4.3 ASG Name | 1 | Contains `asg` and the student's name |
 | 4.4 ASG VPC | 1 | The Q1 VPC |
 | 4.5 ASG Subnets | 3 | Two Q1 public subnets in distinct AZs (1 mark if only one is correct) |
-| 4.6 ASG Security Group | 5 | Named correctly (1), allows port 80 (2), source is the ALB security group (2) |
+| 4.6 ASG Security Group | 4 | Named correctly (1), allows port 80 (1), source is the ALB security group (2) |
 | 4.7 Capacity | 3 | Min 1 / Desired 1 / Max 3 (1 mark if exactly one value is wrong) |
 | 4.8 Target Group Attachment | 3 | A target group is attached (1), and it is the Q3 target group (2) |
 | 4.9 Scaling Policy | 2 | Target tracking policy on Average CPU Utilization (1), target value exactly 70% (1) |
-| 4.10 Healthy Targets | 2 | An ASG instance is registered in the Q3 target group (1), and at least one is healthy (1) |
+| 4.10 Healthy Targets | 3 | An ASG instance is registered in the Q3 target group (1), and at least one is healthy (2) |
 
 Later questions reuse what earlier ones found (the Q1 VPC and public subnets, the Q2 AMI and user data, the Q3 target group and ALB security group), so a missing resource early on can cost marks downstream.
 
