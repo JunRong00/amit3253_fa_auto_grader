@@ -71,6 +71,7 @@ REQUIREMENTS = {
     "4.7": "Min 1, Desired 1, Max 3",
     "4.8": "the Q3 target group",
     "4.9": "CPU target tracking, target 70%",
+    "4.10": "ASG instance healthy in the Q3 target group",
 }
  
  
@@ -554,9 +555,9 @@ def main():
             target_lt = lt_candidates[0]
         lt_name = target_lt.get('LaunchTemplateName', '') if target_lt else ""
  
-        # 4.1 Launch Template Name (3m)
+        # 4.1 Launch Template Name (1m)
         lt_name_ok = bool(target_lt) and has_token(lt_name, 'lt') and has_token(lt_name, name_token)
-        award_points("4.1 Launch Template Name", 3, 3 if lt_name_ok else 0, lt_name or "not found")
+        award_points("4.1 Launch Template Name", 1, 1 if lt_name_ok else 0, lt_name or "not found")
  
         if target_lt:
             versions = ec2.describe_launch_template_versions(
@@ -692,6 +693,20 @@ def main():
             policy_target_ok = any(c.get('TargetValue') == 70 for c in (cpu_configs or tt_configs))
         award_points("4.9 Scaling Policy", 2, (1 if policy_cpu_ok else 0) + (1 if policy_target_ok else 0),
                      f"cpu_target_tracking={policy_cpu_ok}, target_70={policy_target_ok}")
+ 
+        # 4.10 Healthy Targets (1m an ASG instance is registered in the Q3 TG, 1m one of them is healthy)
+        asg_target_registered = asg_target_healthy = False
+        if target_asg and target_tg:
+            asg_instance_ids = {i['InstanceId'] for i in target_asg.get('Instances', [])}
+            health = elbv2.describe_target_health(
+                TargetGroupArn=target_tg['TargetGroupArn']
+            )['TargetHealthDescriptions']
+            asg_targets = [h for h in health if h.get('Target', {}).get('Id') in asg_instance_ids]
+            asg_target_registered = bool(asg_targets)
+            asg_target_healthy = any(h.get('TargetHealth', {}).get('State') == 'healthy' for h in asg_targets)
+        award_points("4.10 Healthy Targets", 2,
+                     (1 if asg_target_registered else 0) + (1 if asg_target_healthy else 0),
+                     f"registered={asg_target_registered}, healthy={asg_target_healthy}")
  
     except Exception as e:
         print("Error grading Question 4 - ask your marker to check.")
